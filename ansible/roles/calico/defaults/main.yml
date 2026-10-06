@@ -1,0 +1,13 @@
+---
+# Calico role defaults
+# These will be overridden by playbook variables
+
+calico_version: "v3.27.0"
+encapsulation: "VXLANCrossSubnet"
+bgp: "Enabled"
+nat_outgoing: "Enabled"
+block_size: 26
+
+# Timeouts (in seconds)
+calico_operator_timeout: 300
+calico_installation_timeout: 600

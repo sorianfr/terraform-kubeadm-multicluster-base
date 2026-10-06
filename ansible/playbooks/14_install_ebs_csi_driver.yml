@@ -1,0 +1,33 @@
+---
+# Installs the AWS EBS CSI driver via Helm on every cluster defined in group_vars/all.yml.
+# Requires: Helm (playbook 6), merged kubeconfigs on the bastion, and Terraform-applied
+# IAM (AmazonEBSCSIDriverPolicy on worker/control-plane instance roles — see modules/kubeadm_cluster).
+
+- name: Install AWS EBS CSI driver on all clusters
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - "../group_vars/all.yml"
+
+  tasks:
+    - name: Build cluster_list from Terraform-generated clusters map
+      ansible.builtin.set_fact:
+        cluster_list: "{{ cluster_list | default([]) + [ {
+          'name': item.key,
+          'kubeconfig': item.value.kubeconfig
+        } ] }}"
+      loop: "{{ clusters | dict2items }}"
+      loop_control:
+        loop_var: item
+
+    - name: Install EBS CSI driver per cluster
+      ansible.builtin.include_role:
+        name: install_ebs_csi_driver
+      loop: "{{ cluster_list }}"
+      loop_control:
+        loop_var: cluster
+      vars:
+        kubeconfig_path: "{{ cluster.kubeconfig }}"
+        cluster_name: "{{ cluster.name }}"

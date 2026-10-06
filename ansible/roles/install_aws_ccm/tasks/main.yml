@@ -1,0 +1,24 @@
+---
+- name: Ensure Helm repo exists
+  command: helm repo add aws-cloud-controller-manager https://kubernetes.github.io/cloud-provider-aws
+  register: add_repo
+  failed_when: add_repo.rc != 0 and "exists" not in add_repo.stderr
+  delegate_to: localhost
+
+- name: Update Helm repos
+  command: helm repo update
+  delegate_to: localhost
+
+- name: Install / Upgrade AWS Cloud Controller Manager
+  ansible.builtin.command: >
+    helm upgrade --install aws-ccm
+    aws-cloud-controller-manager/aws-cloud-controller-manager
+    --namespace kube-system
+    --set args[0]=--v=2
+    --set args[1]=--cloud-provider=aws
+    --set args[2]=--cluster-name={{ cluster_name }}
+    --set args[3]=--configure-cloud-routes=false
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ lookup('env','HOME') }}/ansible/kubeconfigs/{{ cluster_name }}-kubeconfig.yaml"

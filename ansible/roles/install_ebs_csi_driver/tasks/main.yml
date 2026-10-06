@@ -1,0 +1,84 @@
+---
+# Expects: kubeconfig_path, cluster_name, aws_region (from playbook / group_vars).
+
+- name: Resolve kubeconfig path on controller
+  ansible.builtin.set_fact:
+    kubeconfig_expanded: "{{ kubeconfig_path | regex_replace('^~', lookup('env', 'HOME')) }}"
+
+- name: Ensure kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ kubeconfig_expanded }}"
+  register: ebs_csi_kubeconfig_stat
+
+- name: Fail if kubeconfig missing
+  ansible.builtin.fail:
+    msg: "Kubeconfig not found at {{ kubeconfig_expanded }} (cluster {{ cluster_name }})"
+  when: not ebs_csi_kubeconfig_stat.stat.exists
+
+- name: Add aws-ebs-csi-driver Helm repo
+  ansible.builtin.command: helm repo add aws-ebs-csi-driver https://kubernetes-sigs.github.io/aws-ebs-csi-driver
+  register: ebs_csi_repo_add
+  changed_when: "'has been added' in ebs_csi_repo_add.stdout | default('')"
+  failed_when: ebs_csi_repo_add.rc != 0 and 'already exists' not in (ebs_csi_repo_add.stderr | default(''))
+
+- name: Update Helm repositories
+  ansible.builtin.command: helm repo update
+  changed_when: false
+
+- name: Install or upgrade AWS EBS CSI driver
+  ansible.builtin.shell: |
+    set -euo pipefail
+    helm_cmd="helm upgrade --install {{ ebs_csi_release_name }} {{ ebs_csi_chart_ref }} \
+      --namespace {{ ebs_csi_namespace }} \
+      --kubeconfig {{ kubeconfig_expanded }} \
+      --set controller.region={{ aws_region }}"
+    {% if ebs_csi_chart_version | length > 0 %}
+    helm_cmd="$helm_cmd --version {{ ebs_csi_chart_version }}"
+    {% endif %}
+    eval "$helm_cmd"
+  args:
+    executable: /bin/bash
+
+- name: Wait for ebs-csi-controller deployment
+  ansible.builtin.command: >
+    kubectl rollout status deployment/ebs-csi-controller
+    -n {{ ebs_csi_namespace }}
+    --kubeconfig {{ kubeconfig_expanded }}
+    --timeout=300s
+  register: ebs_csi_controller_rollout
+  retries: 3
+  delay: 15
+  until: ebs_csi_controller_rollout.rc == 0
+  changed_when: false
+
+- name: Wait for ebs-csi-node daemonset
+  ansible.builtin.command: >
+    kubectl rollout status daemonset/ebs-csi-node
+    -n {{ ebs_csi_namespace }}
+    --kubeconfig {{ kubeconfig_expanded }}
+    --timeout=300s
+  register: ebs_csi_node_rollout
+  retries: 3
+  delay: 15
+  until: ebs_csi_node_rollout.rc == 0
+  changed_when: false
+
+- name: Apply default gp3 StorageClass
+  ansible.builtin.command: >
+    kubectl apply -f {{ role_path }}/files/gp3-default-storageclass.yaml
+    --kubeconfig {{ kubeconfig_expanded }}
+  when: ebs_csi_create_gp3_default_storageclass | bool
+  register: ebs_csi_sc_apply
+  changed_when: "'created' in ebs_csi_sc_apply.stdout or 'configured' in ebs_csi_sc_apply.stdout"
+
+- name: Show CSI pods in kube-system
+  ansible.builtin.shell: >
+    kubectl get pods -n {{ ebs_csi_namespace }}
+    --kubeconfig {{ kubeconfig_expanded }}
+    -o wide | grep -E 'ebs-csi|NAME' || true
+  register: ebs_csi_pods
+  changed_when: false
+
+- name: Display CSI pod status
+  ansible.builtin.debug:
+    msg: "{{ ebs_csi_pods.stdout_lines }}"

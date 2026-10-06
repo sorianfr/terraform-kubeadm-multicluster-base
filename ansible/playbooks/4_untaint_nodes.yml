@@ -1,0 +1,7 @@
+---
+- name: Untaint Kubernetes nodes
+  hosts: clusters
+  gather_facts: no
+
+  roles:
+    - untaint_nodes

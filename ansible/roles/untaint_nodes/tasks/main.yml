@@ -1,0 +1,24 @@
+---
+- name: Wait for Kubernetes API ready on this cluster
+  ansible.builtin.command: >
+    kubectl --context {{ hostvars[inventory_hostname].cluster_name }}
+    get --raw='/readyz'
+  delegate_to: localhost
+  register: readyz
+  retries: 60
+  delay: 10
+  until: readyz.rc == 0
+  changed_when: false
+
+
+- name: Get nodes in the cluster
+  command: kubectl get nodes -o name --context {{ hostvars[inventory_hostname].cluster_name }}
+  register: nodes_output
+  delegate_to: localhost
+
+- name: Remove cloud-uninitialized taint
+  command: kubectl taint nodes {{ item }} node.cloudprovider.kubernetes.io/uninitialized- --context {{ hostvars[inventory_hostname].cluster_name }}
+  loop: "{{ nodes_output.stdout_lines }}"
+  delegate_to: localhost
+  changed_when: true
+  failed_when: false

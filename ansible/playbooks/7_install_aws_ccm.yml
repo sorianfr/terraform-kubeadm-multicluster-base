@@ -1,0 +1,7 @@
+---
+- name: Install AWS CCM on all clusters
+  hosts: clusters
+  gather_facts: no
+
+  roles:
+    - install_aws_ccm

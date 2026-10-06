@@ -1,0 +1,212 @@
+---
+###############################################################################
+# Install required tools
+###############################################################################
+- name: Install required build tools
+  become: yes
+  ansible.builtin.apt:
+    name:
+      - make
+      - gcc
+      - g++
+      - build-essential
+      - curl
+      - tar
+    state: present
+    update_cache: yes
+
+###############################################################################
+# Download Istio if not present
+###############################################################################
+- name: Download Istio {{ istio_version }} if not exists
+  ansible.builtin.shell: >
+    curl -L https://istio.io/downloadIstio | ISTIO_VERSION={{ istio_version }} sh -
+  args:
+    chdir: "/home/ubuntu"
+    creates: "/home/ubuntu/istio-{{ istio_version }}"
+
+###############################################################################
+# Set istio_dir fact
+###############################################################################
+- name: Set istio_dir fact
+  ansible.builtin.set_fact:
+    istio_dir: "/home/ubuntu/istio-{{ istio_version }}"
+
+- name: Debug istio_dir
+  debug:
+    var: istio_dir
+
+###############################################################################
+# ADD ISTIOCTL TO PATH (NEW)
+###############################################################################
+
+- name: Ensure istioctl path is in .bashrc (permanent)
+  ansible.builtin.lineinfile:
+    path: "/home/ubuntu/.bashrc"
+    line: 'export PATH="$PATH:/home/ubuntu/istio-{{ istio_version }}/bin"'
+    insertafter: EOF
+
+- name: Load istioctl path for current Ansible session
+  ansible.builtin.shell: |
+    export PATH="$PATH:/home/ubuntu/istio-{{ istio_version }}/bin"
+  args:
+    executable: /bin/bash
+
+###############################################################################
+# Create certs directory
+###############################################################################
+- name: Ensure certs directory exists
+  ansible.builtin.file:
+    path: "{{ istio_dir }}/certs"
+    state: directory
+
+###############################################################################
+# Generate ROOT CA once
+###############################################################################
+- name: Generate root CA
+  command: >
+    make -f tools/certs/Makefile.selfsigned.mk root-ca
+  args:
+    chdir: "{{ istio_dir }}"
+    creates: "{{ istio_dir }}/root-cert.pem"
+
+###############################################################################
+# Generate intermediate CA for each cluster
+###############################################################################
+- name: Generate intermediate CA for each cluster
+  command: >
+    make -f tools/certs/Makefile.selfsigned.mk {{ item.name }}-cacerts
+  args:
+    chdir: "{{ istio_dir }}"
+  loop: "{{ cluster_list }}"
+
+###############################################################################
+# Create istio-system namespace in each cluster
+###############################################################################
+- name: Create istio-system namespace
+  command: >
+    kubectl --context {{ item.context }} create namespace istio-system
+  ignore_errors: yes
+  loop: "{{ cluster_list }}"
+
+###############################################################################
+# Create cacerts secrets
+###############################################################################
+- name: Create cacerts secret
+  command: >
+    kubectl --context {{ item.context }} create secret generic cacerts
+    -n istio-system
+    --from-file=ca-cert.pem={{ istio_dir }}/{{ item.name }}/ca-cert.pem
+    --from-file=ca-key.pem={{ istio_dir }}/{{ item.name }}/ca-key.pem
+    --from-file=root-cert.pem={{ istio_dir }}/root-cert.pem
+    --from-file=cert-chain.pem={{ istio_dir }}/{{ item.name }}/cert-chain.pem
+  ignore_errors: yes
+  loop: "{{ cluster_list }}"
+
+
+- name: Label istio-system with network for each cluster
+  ansible.builtin.command: >
+    kubectl --context {{ item.context }}
+    label namespace istio-system topology.istio.io/network={{ item.network }} --overwrite
+  loop: "{{ cluster_list }}"
+
+
+- name: Create config YAML per cluster
+  ansible.builtin.copy:
+    dest: "{{ playbook_dir }}/cluster_{{ item.name }}.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: install.istio.io/v1alpha1
+      kind: IstioOperator
+      spec:
+        values:
+          global:
+            meshID: mesh1
+            multiCluster:
+              clusterName: {{ item.name }}
+            network: {{ item.network }}
+  loop: "{{ cluster_list }}"
+
+- name: Install Istio on each cluster
+  ansible.builtin.command: >
+    {{ istio_dir }}/bin/istioctl install
+    --context {{ item.context }}
+    -f {{ playbook_dir }}/cluster_{{ item.name }}.yaml -y
+  loop: "{{ cluster_list }}"
+
+- name: Wait for istiod to be available before east-west gateway
+  ansible.builtin.command: >
+    kubectl --context {{ item.context }}
+    -n istio-system rollout status deployment/istiod
+    --timeout=300s
+  loop: "{{ cluster_list }}"
+
+###############################################################################
+# Install East-West Gateway on each cluster
+###############################################################################
+- name: Install east-west gateway for each cluster
+  ansible.builtin.shell: |
+    set -euo pipefail
+    {{ istio_dir }}/samples/multicluster/gen-eastwest-gateway.sh \
+      --network {{ item.network }} | \
+    {{ istio_dir }}/bin/istioctl install --context {{ item.context }} -y -f -
+  args:
+    chdir: "{{ istio_dir }}"
+    executable: /bin/bash
+  loop: "{{ cluster_list }}"
+  register: east_west_gateway_result
+  retries: 5
+  delay: 20
+  until: east_west_gateway_result.rc == 0
+
+- name: Wait for east-west gateway deployment
+  ansible.builtin.command: >
+    kubectl --context {{ item.context }}
+    -n istio-system rollout status deployment/istio-eastwestgateway
+    --timeout=300s
+  loop: "{{ cluster_list }}"
+
+- name: Debug east-west gateway output
+  debug:
+    var: east_west_gateway_result.results | map(attribute='stdout_lines') | list
+
+###############################################################################
+# Expose services for east-west gateway on each cluster
+###############################################################################
+- name: Expose services on each cluster
+  ansible.builtin.command: >
+    kubectl --context {{ item.context }}
+    apply -n istio-system
+    -f {{ istio_dir }}/samples/multicluster/expose-services.yaml
+  loop: "{{ cluster_list }}"
+
+
+  ###############################################################################
+# Build dynamic list of remote secret operations (all cluster pairs)
+###############################################################################
+- name: Build remote secret pair list dynamically
+  ansible.builtin.set_fact:
+    remote_secret_pairs: >-
+      {{
+        remote_secret_pairs | default([]) +
+        [{'src': item.0, 'dest': item.1}]
+        if item.0.name != item.1.name else remote_secret_pairs | default([])
+      }}
+  loop: "{{ cluster_list | product(cluster_list) }}"
+  loop_control:
+    label: "{{ item.0.name }} -> {{ item.1.name }}"
+
+###############################################################################
+# Enable Endpoint Discovery across all clusters (dynamic pairwise)
+###############################################################################
+- name: Apply remote secrets for all cross-cluster pairs
+  ansible.builtin.shell: |
+    {{ istio_dir }}/bin/istioctl create-remote-secret \
+      --context {{ item.src.context }} \
+      --name {{ item.src.name }} \
+    | kubectl apply -f - --context {{ item.dest.context }}
+  loop: "{{ remote_secret_pairs }}"
+  loop_control:
+    label: "src={{ item.src.name }} dest={{ item.dest.name }}"
+  environment:
+    PATH: "{{ istio_dir }}/bin:{{ ansible_env.PATH }}"

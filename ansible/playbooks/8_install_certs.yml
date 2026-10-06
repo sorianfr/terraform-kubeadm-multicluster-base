@@ -1,0 +1,29 @@
+---
+- name: Generate Istio root + intermediate certificates for all clusters
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  vars_files:
+    - "../group_vars/all.yml"
+
+  
+  tasks:
+    - name: Build cluster_list correctly
+      set_fact:
+        cluster_list: "{{ cluster_list | default([]) + [ {
+          'name': item.key,
+          'context': item.key,
+          'network': item.value.network,
+          'kubeconfig': item.value.kubeconfig
+        } ] }}"
+      loop: "{{ clusters | dict2items }}"
+      loop_control:
+        loop_var: item
+
+    - debug:
+        var: cluster_list
+
+    - name: Include certs role
+      include_role:
+        name: certs

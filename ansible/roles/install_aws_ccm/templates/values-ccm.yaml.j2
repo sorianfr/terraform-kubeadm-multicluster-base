@@ -1,0 +1,14 @@
+namespace: kube-system
+
+image:
+  repository: registry.k8s.io/provider-aws/cloud-controller-manager
+  tag: v1.34.0
+
+args:
+  - --v=2
+  - --cloud-provider=aws
+  - --cluster-name={{ cluster_name }}
+  - --configure-cloud-routes=false
+
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""

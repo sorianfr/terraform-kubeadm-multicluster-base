@@ -1,0 +1,27 @@
+---
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    bgp: {{ bgp }}
+
+---
+apiVersion: operator.tigera.io/v1
+kind: IPPool
+metadata:
+  name: default-pool
+spec:
+  cidr: {{ pod_cidr }}
+  blockSize: {{ block_size }}
+  encapsulation: {{ encapsulation }}
+  natOutgoing: {{ nat_outgoing }}
+  nodeSelector: all()
+
+---
+apiVersion: operator.tigera.io/v1
+kind: APIServer
+metadata:
+  name: default
+spec: {}

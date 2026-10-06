@@ -1,0 +1,11 @@
+---
+# Helm release name (official chart default).
+ebs_csi_release_name: aws-ebs-csi-driver
+ebs_csi_namespace: kube-system
+
+# Chart: https://kubernetes-sigs.github.io/aws-ebs-csi-driver
+ebs_csi_chart_ref: aws-ebs-csi-driver/aws-ebs-csi-driver
+ebs_csi_chart_version: ""
+
+# Optional: apply a default gp3 StorageClass (provisioner ebs.csi.aws.com).
+ebs_csi_create_gp3_default_storageclass: true
