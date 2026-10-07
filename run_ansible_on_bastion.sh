@@ -24,7 +24,7 @@ ansible-playbook -i inventory/hosts.yml playbooks/4_untaint_nodes.yml
 ansible-playbook -i inventory/hosts.yml playbooks/5_install_calico.yml
 ansible-playbook -i inventory/hosts.yml playbooks/6_install_helm.yml
 ansible-playbook -i inventory/hosts.yml playbooks/7_install_aws_ccm.yml
-ansible-playbook -i inventory/hosts.yml playbooks/8_install_certs.yml
+#ansible-playbook -i inventory/hosts.yml playbooks/8_install_certs.yml
 
 # Install EBS CSI so StorageClass/PVC provisioning is ready
 ansible-playbook -i "$INVENTORY" playbooks/14_install_ebs_csi_driver.yml
