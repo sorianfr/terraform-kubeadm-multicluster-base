@@ -12,5 +12,27 @@ clusters = [
     network                    = "network1"
 
     enable_aws_ccm             = true
-  }
+  },
+  # {
+  #   name                       = "cluster2"
+  #   private_subnet_cidr_block  = "10.0.3.0/24"
+  #   controlplane_private_ip    = "10.0.3.10"
+  #   instance_type              = "c7i-flex.large"
+  #   worker_min                 = 2
+  #   worker_max                 = 4
+  #   worker_desired             = 2
+  #   pod_cidr                   = "10.245.0.0/16"
+  #   service_cidr               = "10.100.0.0/16"
+  #   network                    = "network2"
+  #
+  #   enable_aws_ccm             = true
+  #
+  #   worker_ebs_volumes = [
+  #     {
+  #       device_name = "/dev/xvdf"
+  #       volume_size = 20
+  #       volume_type = "gp3"
+  #     }
+  #   ]
+  # }
 ]
